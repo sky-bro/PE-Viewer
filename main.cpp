@@ -1,6 +1,7 @@
 // PE and PE32+
 #include <iostream>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -10,6 +11,7 @@
 
 using namespace std;
 const int buf_size = 0x100;
+const int name_buf_size = 100;
 char pe_name[100];
 char tmp_buf[buf_size];
 
@@ -71,45 +73,54 @@ int main(int argc, char const *argv[])
     IMAGE_DATA_DIRECTORY *pimport_directory = popt_header->DataDirectory+1;
     DWORD import_offset = pimport_directory->VirtualAddress; // now it's actually virtual offset
     import_offset = RVA2RAW(import_offset, psection_header, number_of_sections); // convert to RawOffset
-    DWORD import_size = pimport_directory->Size;
-    DWORD import_num = import_size / IMPORT_DESCRIPTOR_SIZE;
+    // do not use imoprt_size to determine the number of IIDs
+    // DWORD import_size = pimport_directory->Size;
+    // DWORD import_num = import_size / IMPORT_DESCRIPTOR_SIZE;
 
-    PIMAGE_IMPORT_DESCRIPTOR pimport_descriptor = new IMAGE_IMPORT_DESCRIPTOR[import_num];
-    load_buf(pe_file, pimport_descriptor, import_size, import_offset);
-    
-    for (int i = 0; i < import_num; ++i) {
-        if (!pimport_descriptor[i].Name) break;
-        printf("DLL\tOriginalFirstThunk\tTimeDateStamp\tForwarderChain\tName\tFirstThunk\n");
-        LONG dll_name_offset = RVA2RAW(pimport_descriptor[i].Name, psection_header, number_of_sections);
-        load_string(pe_file, tmp_buf, buf_size, dll_name_offset);
-
-        printf("%s\t%08X\t%08X\t%08X\t%08X\t%08X\n\n", tmp_buf, pimport_descriptor[i].OriginalFirstThunk,
-         pimport_descriptor[i].TimeDateStamp, 
-         pimport_descriptor[i].ForwarderChain, 
-         pimport_descriptor[i].Name, 
-         pimport_descriptor[i].FirstThunk);
+    // PIMAGE_IMPORT_DESCRIPTOR pimport_descriptor = new IMAGE_IMPORT_DESCRIPTOR[import_num];
+    PIMAGE_IMPORT_DESCRIPTOR pimport_descriptor = new IMAGE_IMPORT_DESCRIPTOR;
+    // load_buf(pe_file, pimport_descriptor, import_size, import_offset);
+    for (int i = 0; ; ++i) {
+        load_buf(pe_file, pimport_descriptor, IMPORT_DESCRIPTOR_SIZE, import_offset + i*IMPORT_DESCRIPTOR_SIZE);
+        if (!pimport_descriptor->Name) break;
+        printf("-----------\n");
+        printf("|   %03d   |\n", i);
+        printf("-----------\n");
         
-        printf("ThunkRVA\tThunkOffset\tThunkVal\tordinal\tAPIname\n");
-        DWORD int_rva = pimport_descriptor[i].OriginalFirstThunk;
+        LONG dll_name_offset = RVA2RAW(pimport_descriptor->Name, psection_header, number_of_sections);
+        load_string(pe_file, tmp_buf, name_buf_size, dll_name_offset);
+        printf("DLL:\t\t\t%s\n", tmp_buf);
+        printf("OriginalFirstThunk:\t%08X\n", pimport_descriptor->OriginalFirstThunk);
+        time_t t = pimport_descriptor->TimeDateStamp;
+        tm *p=gmtime(&t);
+        strftime(tmp_buf, 80, "%Y-%m-%d %H:%M:%S", p);
+        printf("TimeDateStamp:\t\t%08X (%s)\n", pimport_descriptor->TimeDateStamp, tmp_buf);
+        printf("ForwarderChain:\t\t%08X\n", pimport_descriptor->ForwarderChain);
+        printf("Name:\t\t\t%08X\n", pimport_descriptor->Name);
+        printf("FirstThunk:\t\t%08X\n\n", pimport_descriptor->FirstThunk);
+        
+        printf("ThunkRVA\t|\tThunkOffset\t|\tThunkVal\t|\tordinal\t|\tAPIname\n");
+        printf("------------------------------------------------------------------------------------------------------------------\n");
+        DWORD int_rva = pimport_descriptor->OriginalFirstThunk;
         DWORD int_offset = RVA2RAW(int_rva);
         for (DWORD i = 0; ; ++i) {
             DWORD import_by_name_offset = load_dword(pe_file, int_offset + i*4);
             // printf("%08X--------%08X\n", int_offset + i*4, import_by_name_offset);
             if (!import_by_name_offset) break;
-            printf("%08X\t%08X\t%08X\t", int_rva+i*4, int_offset+i*4, import_by_name_offset);
+            printf("%08X\t|\t%08X\t|\t%08X\t|\t", int_rva+i*4, int_offset+i*4, import_by_name_offset);
             import_by_name_offset = RVA2RAW(import_by_name_offset);
             WORD hint = load_word(pe_file, import_by_name_offset);
-            printf("%04X\t", hint);
+            printf("%04X\t|\t", hint);
             if (hint & 0x8000) { // load by ordinal
                 printf("null\n");
             } else { // load by name
-                load_string(pe_file, tmp_buf, buf_size, import_by_name_offset+2);
+                load_string(pe_file, tmp_buf, name_buf_size, import_by_name_offset+2);
                 printf("%s\n", tmp_buf);
             }
         }
-        printf("------------------------------------------------------------------\n");
+        printf("\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n");
     }
-    delete [] pimport_descriptor;
+    delete pimport_descriptor;
     delete popt_header;
     delete [] psection_header;
     delete pdos_header;

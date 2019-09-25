@@ -1,6 +1,6 @@
 #ifndef PEVIEWER_H
 
-#include <stdio.h>
+#include <iostream>
 
 typedef unsigned char BYTE;
 typedef unsigned short WORD;
